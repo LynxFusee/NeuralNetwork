@@ -1,54 +1,11 @@
-"""
-Car Dodge — a simple survival game, built to be AI-controllable.
-
-The car moves left/right along the bottom of the screen while obstacles
-fall from the top. Survive as long as possible.
-
-The file is split into two layers on purpose:
-
-1. CarDodgeEnv — pure game logic (state, physics, collisions, reward).
-   This is what your AI will actually talk to. It doesn't need a window
-   or a human anywhere near it.
-2. A pygame front-end (`run()`) so a human can play, or so you can watch
-   an AI play by passing it an `agent` function.
-
-HOW AN AI PLUGS IN
--------------------
-    env = CarDodgeEnv()
-    state = env.reset()
-    while True:
-        action = your_ai.choose_action(state)   # 0 = stay, 1 = left, 2 = right
-        state, reward, done, info = env.step(action)
-        if done:
-            break
-
-`state` is a flat list of floats: the car's position plus the next few
-obstacles' positions/speeds, all normalized to roughly 0-1. That's a
-ready-made input vector for a Q-table, a small neural net, a genetic
-algorithm — whatever you build next. `reward` is +0.1 for every frame
-survived and -10 on crash, which is enough to get reinforcement learning
-off the ground (maximize total reward = survive longer).
-
-RUNNING IT (NixOS)
--------------------
-    nix-shell -p python3 python3Packages.pygame --run "python car_dodge.py"
-
-CONTROLS
---------
-Arrow keys move the car (safest bet given your AZERTY layout — the
-letter-key aliases below assume the physical key produces 'q'/'d',
-which is where your fingers rest on AZERTY; swap them in the code if
-that's not the case for you).
-"""
-
 import sys
 import random
 import pygame
 import ai
+import copy
+import json
+import os
 
-# ---------------------------------------------------------------- #
-# Config — tweak freely
-# ---------------------------------------------------------------- #
 SCREEN_W, SCREEN_H = 480, 640
 CAR_W, CAR_H = 50, 80
 CAR_Y = SCREEN_H - CAR_H - 20
@@ -56,165 +13,207 @@ CAR_SPEED = 8
 
 OBSTACLE_W, OBSTACLE_H = 50, 50
 OBSTACLE_START_SPEED = 5
-OBSTACLE_SPEED_RAMP = 0.09       # obstacle speed grows with survival time
+OBSTACLE_SPEED_RAMP = 0.09
 SPAWN_EVERY_MS_START = 900
 SPAWN_EVERY_MS_MIN = 350
-SPAWN_RAMP = 20                  # spawn interval shrinks with survival time
+SPAWN_RAMP = 20
 
-N_TRACKED_OBSTACLES = 3          # how many upcoming obstacles feed into the state vector
+N_TRACKED_OBSTACLES = 3
 FPS = 60
 
 ACTION_STAY, ACTION_LEFT, ACTION_RIGHT = 0, 1, 2
 
 
 class CarDodgeEnv:
-    """Pure game logic. No window required to call reset()/step()."""
-
-    def __init__(self):
+    """Environnement modifié pour gérer N voitures simultanément."""
+    def __init__(self, num_cars=10):
+        self.num_cars = num_cars
         self.reset()
 
     def reset(self):
-        self.car_x = SCREEN_W / 2 - CAR_W / 2
-        self.obstacles = []          # each entry: [x, y, speed]
-        self.time_alive = 0.0
+        # Chaque voiture a sa propre position, son état (en vie) et son temps de survie
+        self.cars = [{"x": SCREEN_W / 2 - CAR_W / 2, "alive": True, "time_alive": 0.0} for _ in range(self.num_cars)]
+        
+        self.obstacles = []
+        self.global_time = 0.0
         self.spawn_timer = 0.0
         self.spawn_interval = SPAWN_EVERY_MS_START
         self.obstacle_speed = OBSTACLE_START_SPEED
         self.done = False
-        return self._get_state()
+        return self.get_states()
 
-    def step(self, action, dt_ms=1000 / FPS):
+    def get_states(self):
+        """Génère la liste des 'états' (la vue) pour chaque voiture en vie."""
+        states = []
+        for car in self.cars:
+            if not car["alive"]:
+                states.append(None) # La voiture est morte, pas besoin d'état
+                continue
+            
+            state = [car["x"] / SCREEN_W]
+            upcoming = sorted(self.obstacles, key=lambda ob: ob[1])[:N_TRACKED_OBSTACLES]
+            for ob in upcoming:
+                state += [ob[0] / SCREEN_W, ob[1] / SCREEN_H, ob[2] / 20]
+            while len(state) < 1 + N_TRACKED_OBSTACLES * 3:
+                state += [0.0, -1.0, 0.0]
+            states.append(state)
+        return states
+
+    def step(self, actions, dt_ms=1000 / FPS):
         if self.done:
-            raise RuntimeError("Episode finished — call reset() before stepping again.")
+            raise RuntimeError("Épisode terminé, appelez reset().")
 
-        # 1. move the car
-        if action == ACTION_LEFT:
-            self.car_x -= CAR_SPEED
-        elif action == ACTION_RIGHT:
-            self.car_x += CAR_SPEED
-        self.car_x = max(0, min(SCREEN_W - CAR_W, self.car_x))
+        # 1. Gérer la difficulté globale
+        self.global_time += dt_ms / 1000
+        self.obstacle_speed = OBSTACLE_START_SPEED + self.global_time * OBSTACLE_SPEED_RAMP
+        self.spawn_interval = max(SPAWN_EVERY_MS_MIN, SPAWN_EVERY_MS_START - self.global_time * SPAWN_RAMP)
 
-        # 2. ramp difficulty over time
-        self.time_alive += dt_ms / 1000
-        self.obstacle_speed = OBSTACLE_START_SPEED + self.time_alive * OBSTACLE_SPEED_RAMP
-        self.spawn_interval = max(
-            SPAWN_EVERY_MS_MIN,
-            SPAWN_EVERY_MS_START - self.time_alive * SPAWN_RAMP,
-        )
-
-        # 3. spawn new obstacles
+        # 2. Faire apparaître les obstacles (Communs à toutes les voitures)
         self.spawn_timer += dt_ms
         if self.spawn_timer >= self.spawn_interval:
             self.spawn_timer = 0
             x = random.randint(0, SCREEN_W - OBSTACLE_W)
             self.obstacles.append([x, -OBSTACLE_H, self.obstacle_speed])
 
-        # 4. move obstacles, drop the ones that left the screen
         for ob in self.obstacles:
             ob[1] += ob[2]
         self.obstacles = [ob for ob in self.obstacles if ob[1] < SCREEN_H]
 
-        # 5. collision check
-        car_rect = pygame.Rect(self.car_x, CAR_Y, CAR_W, CAR_H)
-        collided = any(
-            car_rect.colliderect(pygame.Rect(ob[0], ob[1], OBSTACLE_W, OBSTACLE_H))
-            for ob in self.obstacles
-        )
+        # 3. Mettre à jour chaque voiture
+        all_dead = True
+        for i, car in enumerate(self.cars):
+            if not car["alive"]:
+                continue
+            
+            act = actions[i]
+            if act == ACTION_LEFT:
+                car["x"] -= CAR_SPEED
+            elif act == ACTION_RIGHT:
+                car["x"] += CAR_SPEED
+            car["x"] = max(0, min(SCREEN_W - CAR_W, car["x"]))
 
-        reward = 0.1
-        if collided:
-            self.done = True
-            reward = -10.0
+            car["time_alive"] += dt_ms / 1000
 
-        return self._get_state(), reward, self.done, {"time_alive": self.time_alive}
+            # Collision pour cette voiture
+            car_rect = pygame.Rect(car["x"], CAR_Y, CAR_W, CAR_H)
+            collided = any(car_rect.colliderect(pygame.Rect(ob[0], ob[1], OBSTACLE_W, OBSTACLE_H)) for ob in self.obstacles)
+            
+            if collided:
+                car["alive"] = False
+            else:
+                all_dead = False # Il reste au moins un survivant
 
-    def _get_state(self):
-        """car_x (normalized) + the N nearest obstacles' (x, y, speed), normalized."""
-        state = [self.car_x / SCREEN_W]
-        upcoming = sorted(self.obstacles, key=lambda ob: ob[1])[:N_TRACKED_OBSTACLES]
-        for ob in upcoming:
-            state += [ob[0] / SCREEN_W, ob[1] / SCREEN_H, ob[2] / 20]
-        while len(state) < 1 + N_TRACKED_OBSTACLES * 3:
-            state += [0.0, -1.0, 0.0]     # padding when fewer obstacles exist yet
-        return state
+        self.done = all_dead
+        return self.get_states(), self.done
 
 
-# ---------------------------------------------------------------- #
-# Pygame front-end
-# ---------------------------------------------------------------- #
-def run(agent=None):
-    """
-    agent=None              -> keyboard control (you play)
-    agent=callable(state)   -> agent(state) must return 0/1/2; used to watch an AI play
-    """
+def train_ai():
     pygame.init()
     screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
-    pygame.display.set_caption("Car Dodge")
+    pygame.display.set_caption("Car Dodge - Entraînement IA Simultané")
     clock = pygame.time.Clock()
     font = pygame.font.SysFont(None, 28)
-
-    env = CarDodgeEnv()
-    state = env.reset()
-
+    
+    num_ais = 20
+    env = CarDodgeEnv(num_cars=num_ais)
+    
+    FICHIER_SAUVEGARDE = "ia.json"
+    
+    # --- CHARGEMENT OU CRÉATION DU MODÈLE ---
+    if os.path.exists(FICHIER_SAUVEGARDE):
+        print("💾 Fichier de sauvegarde trouvé ! Chargement de l'IA...")
+        with open(FICHIER_SAUVEGARDE, "r") as f:
+            data = json.load(f)
+            
+        best_net = ai.Network(
+            layers_count=data["layers_count"],
+            per_layer=data["per_layer"],
+            wheights=data["wheights"],
+            bias=data["bias"],
+            entry_size=data["entry_size"],
+            exit_size=data["exit_size"]
+        )
+        best_net.createNetwork()
+    else:
+        print("🌱 Aucune sauvegarde trouvée. Création d'une nouvelle IA de zéro...")
+        best_net = ai.Network(layers_count=5, per_layer=50, wheights=None, bias=None, entry_size=10, exit_size=1)
+        best_net.createNetwork()
+    
+    generation = 1
+    
     while True:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
-
-        if agent is not None:
-            action = agent(state)
-        else:
-            keys = pygame.key.get_pressed()
-            if keys[pygame.K_LEFT] or keys[pygame.K_a]:
-                action = ACTION_LEFT
-            elif keys[pygame.K_RIGHT] or keys[pygame.K_d]:
-                action = ACTION_RIGHT
-            else:
-                action = ACTION_STAY
-
-        state, reward, done, info = env.step(action)
-
-        screen.fill((25, 25, 35))
-        pygame.draw.rect(screen, (60, 200, 90), (env.car_x, CAR_Y, CAR_W, CAR_H))
-        for ob in env.obstacles:
-            pygame.draw.rect(screen, (220, 70, 70), (ob[0], ob[1], OBSTACLE_W, OBSTACLE_H))
-
-        timer_surf = font.render(f"Time: {info['time_alive']:.1f}s", True, (230, 230, 230))
-        screen.blit(timer_surf, (10, 10))
-
-        if done:
-            msg = font.render("Game over — press R to restart", True, (255, 255, 255))
-            screen.blit(msg, (SCREEN_W / 2 - msg.get_width() / 2, SCREEN_H / 2))
+        networks = []
+        for i in range(num_ais):
+            new_net = copy.deepcopy(best_net)
+            if i > 0:
+                new_net.mutNetwork(i / num_ais)
+            networks.append(new_net)
+        
+        states = env.reset()
+        done = False
+        
+        # --- BOUCLE DE JEU ---
+        while not done:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit()
+            
+            actions = []
+            for i in range(num_ais):
+                if env.cars[i]["alive"]:
+                    state = states[i]
+                    result = networks[i].logic(state)[0]
+                    if result <= -0.33:
+                        actions.append(ACTION_LEFT)
+                    elif result >= 0.33:
+                        actions.append(ACTION_RIGHT)
+                    else:
+                        actions.append(ACTION_STAY)
+                else:
+                    actions.append(ACTION_STAY)
+                    
+            states, done = env.step(actions)
+            
+            screen.fill((25, 25, 35))
+            for ob in env.obstacles:
+                pygame.draw.rect(screen, (220, 70, 70), (ob[0], ob[1], OBSTACLE_W, OBSTACLE_H))
+                
+            alives = 0
+            for i, car in enumerate(env.cars):
+                if car["alive"] and i > 0:
+                    alives += 1
+                    pygame.draw.rect(screen, (60, 200, 90), (car["x"], CAR_Y, CAR_W, CAR_H))
+            
+            if env.cars[0]["alive"]:
+                alives += 1
+                pygame.draw.rect(screen, (60, 200, 255), (env.cars[0]["x"], CAR_Y, CAR_W, CAR_H))
+            
+            text = font.render(f"Gen: {generation} | En vie: {alives}/{num_ais}", True, (255, 255, 255))
+            screen.blit(text, (10, 10))
+            
             pygame.display.flip()
-            waiting = True
-            while waiting:
-                for event in pygame.event.get():
-                    if event.type == pygame.QUIT:
-                        pygame.quit()
-                        sys.exit()
-                    if event.type == pygame.KEYDOWN and event.key == pygame.K_r:
-                        state = env.reset()
-                        waiting = False
-            continue
+            clock.tick(FPS*2)
+            
+        # --- FIN DE GÉNÉRATION ET SAUVEGARDE ---
+        best_score = -1
+        best_index = 0
+        for i, car in enumerate(env.cars):
+            if car["time_alive"] > best_score:
+                best_score = car["time_alive"]
+                best_index = i
+        
+        print(f"Génération {generation} terminée. Meilleur temps: {best_score:.1f}s (IA n°{best_index})")
+        
+        # 1. Mettre à jour l'IA de référence
+        best_net = copy.deepcopy(networks[best_index])
+        
+        # 2. Sauvegarder dans le fichier JSON
+        with open(FICHIER_SAUVEGARDE, "w") as f:
+            json.dump(best_net.export_json(), f, indent=4)
 
-        pygame.display.flip()
-        clock.tick(FPS)
-
-
-def agent(state):
-    """Placeholder AI — picks a random action. Swap this out for your own logic."""
-    result = net.logic(state)
-    if result <= -0.66 :
-        return ACTION_LEFT
-    if result >= 0.66 :
-        return ACTION_RIGHT
-    return ACTION_STAY
+        generation += 1
 
 
 if __name__ == "__main__":
-    # Switch to run(agent=random_agent_demo) to watch a (very dumb) AI play instead.
-    net = ai.Network(3,10,None, None, 9, 1)
-    net.createNetwork()
-    run()
-    #run(agent=random_agent_demo)
+    train_ai()
