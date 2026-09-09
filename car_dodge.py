@@ -44,6 +44,7 @@ that's not the case for you).
 import sys
 import random
 import pygame
+import ai
 
 # ---------------------------------------------------------------- #
 # Config — tweak freely
@@ -203,12 +204,17 @@ def run(agent=None):
 
 def agent(state):
     """Placeholder AI — picks a random action. Swap this out for your own logic."""
-
-
-    return random.choice([ACTION_STAY, ACTION_LEFT, ACTION_RIGHT])
+    result = net.logic(state)
+    if result <= -0.66 :
+        return ACTION_LEFT
+    if result >= 0.66 :
+        return ACTION_RIGHT
+    return ACTION_STAY
 
 
 if __name__ == "__main__":
     # Switch to run(agent=random_agent_demo) to watch a (very dumb) AI play instead.
+    net = ai.Network(3,10,None, None, 9, 1)
+    net.createNetwork()
     run()
     #run(agent=random_agent_demo)
