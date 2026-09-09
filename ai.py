@@ -38,13 +38,29 @@ class node() :
         self.bias += random.randint(-5, 5) * mut
 
 
-class layer():
-    def __init__(self, size, wheights, bias) :
+class layer() :
+    def __init__(self, size, wheights, bias, entry_size) :
         self.size = size
-        self.wheights = wheights
-        self.bias = bias
         self.nodes = []
         self.results = []
+        if wheights is not NONE :
+            self.wheights = wheights
+        else :
+            self.wheights = []
+            for i in range(size) :
+                temp = []
+                for t in range(entry_size) :
+                    temp.append(random.randint(-5, 5))
+                self.wheights.append(temp)
+        
+        if bias is not NONE :
+            self.bias = bias
+        else :
+            self.bias = []
+            for i in range(size) :
+                self.bias.append(random.randint(-5, 5))
+    
+    def 
 
     def giveWheights(self) :
         return self.wheights
@@ -67,4 +83,5 @@ class layer():
         for i in range(self.size) :
             self.results.append(self.nodes[i].logic(entries))
 
-    
+class Network() :
+    def __init__(self, layers, per_layers, wheights, bias) :
