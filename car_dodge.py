@@ -114,7 +114,7 @@ def train_ai():
     clock = pygame.time.Clock()
     font = pygame.font.SysFont(None, 28)
     
-    num_ais = 20
+    num_ais = 200
     env = CarDodgeEnv(num_cars=num_ais)
     
     FICHIER_SAUVEGARDE = "ia.json"
@@ -136,7 +136,7 @@ def train_ai():
         best_net.createNetwork()
     else:
         print("🌱 Aucune sauvegarde trouvée. Création d'une nouvelle IA de zéro...")
-        best_net = ai.Network(layers_count=5, per_layer=50, wheights=None, bias=None, entry_size=10, exit_size=1)
+        best_net = ai.Network(layers_count=2, per_layer=8, wheights=None, bias=None, entry_size=10, exit_size=1)
         best_net.createNetwork()
     
     generation = 1
@@ -145,8 +145,13 @@ def train_ai():
         networks = []
         for i in range(num_ais):
             new_net = copy.deepcopy(best_net)
-            if i > 0:
-                new_net.mutNetwork(i / num_ais)
+            if i < 5 :
+                new_net.mutNetwork(1)
+            elif i < num_ais / 2 :
+                new_net.mutNetwork(0.2)
+            elif i < num_ais / 1.5 :
+                new_net.mutNetwork(0.1)
+            new_net.mutNetwork(0.05)
             networks.append(new_net)
         
         states = env.reset()
@@ -193,7 +198,7 @@ def train_ai():
             screen.blit(text, (10, 10))
             
             pygame.display.flip()
-            clock.tick(FPS*2)
+            clock.tick(FPS*100)
             
         # --- FIN DE GÉNÉRATION ET SAUVEGARDE ---
         best_score = -1
