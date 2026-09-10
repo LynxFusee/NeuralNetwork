@@ -10,8 +10,8 @@ import multiprocessing as mp
 # ==========================================
 #         PARAMÈTRES GLOBAUX
 # ==========================================
-NUM_ENVS = 5                   # Change ça pour le nombre de cœurs de ton CPU (ex: 8)
-CARS_PER_ENV = 60              
+NUM_ENVS = 8                   # Change ça pour le nombre de cœurs de ton CPU (ex: 8)
+CARS_PER_ENV = 100             
 MUTATION_RATE = 0.05           
 FPS = 60                       
 
@@ -266,7 +266,7 @@ def main_process_display():
                 screen.blit(txt_rec, (offset_x + 5, GAME_H + 35))
             
             pygame.display.flip()
-            clock.tick(60) # L'affichage tourne à 60 FPS, les calculs en arrière plan n'ont AUCUNE LIMITE.
+            clock.tick() # L'affichage tourne à 60 FPS, les calculs en arrière plan n'ont AUCUNE LIMITE.
 
     except KeyboardInterrupt:
         pygame.quit()
