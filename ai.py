@@ -26,6 +26,10 @@ class node():
         return self.bias    
 
     def logic(self, entries):
+        diff = len(entries) - len(self.wheights)
+        if diff != 0 :
+            for i in range(diff) : 
+                self.wheights.append(random.uniform(-2.0, 2.0))
         total = 0
         for i in range(len(entries)):
             total += entries[i] * self.wheights[i]
@@ -35,11 +39,18 @@ class node():
     
     def mutation(self, mut):
         for i in range(len(self.wheights)):
-            if random.randint(0, 10) < 2:
-                self.wheights[i] += random.uniform(-5.0, 5.0) * mut
-        
-        if random.randint(0, 10) < 2:
-            self.bias += random.uniform(-5.0, 5.0) * mut
+            if random.random() < mut:
+                self.wheights[i] += random.gauss(0, 0.5)
+                if self.wheights[i] < -2 :
+                    self.wheights[i] = -2
+                if self.wheights[i] > 2 :
+                    self.wheights[i] = 2
+        if random.random() < mut:
+            self.bias += random.gauss(0, 0.5)
+            if self.bias < -2 :
+                self.bias = -2
+            if self.bias > 2 :
+                self.bias = 2
 
 
 class layer():
@@ -76,6 +87,7 @@ class layer():
     def mutLayer(self, mut):
         for i in range(self.size):
             self.nodes[i].mutation(mut)
+        
 
 
 class Network():
@@ -96,13 +108,13 @@ class Network():
                     for x in range(self.per_layer):
                         temp = []
                         for t in range(self.entry_size):
-                            temp.append(random.uniform(-5.0, 5.0))
+                            temp.append(random.uniform(-2.0, 2.0))
                         templayer.append(temp)
                 else:     
                     for x in range(self.per_layer):
                         temp = []
                         for t in range(self.per_layer):
-                            temp.append(random.uniform(-5.0, 5.0))
+                            temp.append(random.uniform(-2.0, 2.0))
                         templayer.append(temp)
                 self.wheights.append(templayer) 
             
@@ -110,7 +122,7 @@ class Network():
             for x in range(self.exit_size):
                 temp = []
                 for t in range(self.per_layer):
-                    temp.append(random.uniform(-5.0, 5.0))
+                    temp.append(random.uniform(-2.0, 2.0))
                 templayer.append(temp)
             self.wheights.append(templayer)
 
@@ -122,12 +134,12 @@ class Network():
                 templayer = []
                 # Correction: ajout de self. devant per_layer
                 for t in range(self.per_layer): 
-                    templayer.append(random.uniform(-5.0, 5.0))
+                    templayer.append(random.uniform(-2.0, 2.0))
                 self.bias.append(templayer)
             
             templayer = []
             for t in range(self.exit_size):
-                templayer.append(random.uniform(-5.0, 5.0))
+                templayer.append(random.uniform(-2.0, 2.0))
             self.bias.append(templayer)
         
     def createNetwork(self):
