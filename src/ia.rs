@@ -1,33 +1,38 @@
-use rand::Rng;
+use rand::RngExt;
 use rand_distr::{Normal, Distribution};
+use serde::{Serialize, Deserialize};
 
-pub const MUT_CHANCE: f32 = 0.20;
-pub const MUT_FORCE: f32 = 0.05;
-pub const TOP_MUT_CHANCE: f32 = 0.03;
+pub const MUT_CHANCE: f32 = 0.50; 
+pub const MUT_FORCE: f32 = 0.30;  
+//pub const TOP_MUT_CHANCE: f32 = 0.03;
+pub const RND_MUT_CHANCE: f32 = 0.85;
 
-struct Neuron {
-    weights: Vec<f32>,
-    bias: f32,
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Neuron {
+    pub weights: Vec<f32>,
+    pub bias: f32,
 }
 
-struct Layer {
-    neurons: Vec<Neuron>,
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Layer {
+    pub neurons: Vec<Neuron>,
 }
 
-struct Network {
-    layers: Vec<Layer>,
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Network {
+    pub layers: Vec<Layer>,
 }
 
 impl Neuron {
-    fn new(entry_size: usize, weights_given: Option<Vec<f32>>, bias_given: Option<f32>) -> Self {
-        let mut rng = rand::thread_rng();
+    pub fn new(entry_size: usize, weights_given: Option<Vec<f32>>, bias_given: Option<f32>) -> Self {
+        let mut rng = rand::rng();
         let mut weights = match weights_given {
             Some(w) => w,
             None => vec![],
         };
 
         while entry_size > weights.len() {
-            weights.push(rng.gen_range(-2.0..2.0));
+            weights.push(rng.random_range(-2.0..2.0));
         }
 
         while entry_size < weights.len() {
@@ -37,7 +42,7 @@ impl Neuron {
         let bias = match bias_given {
             Some(value) => value, 
             None => {
-                rng.gen_range(-1.0..1.0)
+                rng.random_range(-1.0..1.0)
             }
         };
 
@@ -47,30 +52,38 @@ impl Neuron {
         }
     }
 
-    fn logic(&self, entries: &Vec<f32>) -> f32 {
+    pub fn logic(&self, entries: &Vec<f32>) -> f32 {
         let mut total: f32 = entries.iter().zip(self.weights.iter()).map(|(e, w)| e * w).sum();
         total += self.bias;
         total.tanh()
     }
 
-    fn mutate(&mut self) {
-        let mut rng = rand::thread_rng();
+    pub fn mutate(&mut self) {
+        let mut rng = rand::rng();
         let dist = Normal::new(0.0, MUT_FORCE).unwrap(); 
         for weight in self.weights.iter_mut() {
-            if rng.gen::<f32>() < MUT_CHANCE {
-                *weight += dist.sample(&mut rng);
-                *weight = weight.clamp(-2.0, 2.0);
+            if rng.random::<f32>() < MUT_CHANCE {
+                if rng.random::<f32>() < RND_MUT_CHANCE {
+                    *weight += dist.sample(&mut rng);
+                    *weight = weight.clamp(-2.0, 2.0);
+                } else {
+                    *weight = rng.random_range(-2.0..2.0);
+                }
             }
         }
-        if rng.gen::<f32>() < MUT_CHANCE {
-            self.bias += dist.sample(&mut rng);
-            self.bias = self.bias.clamp(-2.0, 2.0);
+        if rng.random::<f32>() < MUT_CHANCE {
+            if rng.random::<f32>() < RND_MUT_CHANCE {
+                self.bias += dist.sample(&mut rng);
+                self.bias = self.bias.clamp(-2.0, 2.0);
+            } else {
+                self.bias = rng.random_range(-2.0..2.0);
+            }
         }
     }
 }
 
 impl Layer {
-    fn new(size: usize, entry_size: usize, mut weights: Option<Vec<Vec<f32>>>, mut bias_given: Option<Vec<f32>>) -> Self {
+    pub fn new(size: usize, entry_size: usize, mut weights: Option<Vec<Vec<f32>>>, mut bias_given: Option<Vec<f32>>) -> Self {
         if let Some(w) = &mut weights {
             w.reverse();
         }
@@ -90,23 +103,19 @@ impl Layer {
         }
     }
 
-    fn logic(&self, entries: Vec<f32>) -> Vec<f32> {
+    pub fn logic(&self, entries: Vec<f32>) -> Vec<f32> {
         self.neurons.iter().map(|neuron| neuron.logic(&entries)).collect()
     }
 
-    fn mutate(&mut self) {
-        for i in 0..self.neurons.len() {
-            self.neurons[i].mutate();
+    pub fn mutate(&mut self) {
+        for neuron in self.neurons.iter_mut() {
+            neuron.mutate();
         }
-    }
-
-    fn upgrade(&mut self) {
-        
     }
 }
 
 impl Network {
-    fn new(per_layer: Vec<usize>, mut entry_size: usize, mut weights: Option<Vec<Vec<Vec<f32>>>>, mut bias_given: Option<Vec<Vec<f32>>>) -> Self {
+    pub fn new(per_layer: Vec<usize>, mut entry_size: usize, mut weights: Option<Vec<Vec<Vec<f32>>>>, mut bias_given: Option<Vec<Vec<f32>>>) -> Self {
         if let Some(w) = &mut weights {
             w.reverse();
         }
@@ -123,10 +132,16 @@ impl Network {
         }
     }
 
-    fn logic(&self, mut entries: Vec<f32>) -> Vec<f32> {
+    pub fn logic(&self, mut entries: Vec<f32>) -> Vec<f32> {
         for i in 0..self.layers.len() {
             entries = self.layers[i].logic(entries);
         }
         entries
+    }
+
+    pub fn mutate(&mut self) {
+        for layer in self.layers.iter_mut() {
+            layer.mutate();
+        }
     }
 }

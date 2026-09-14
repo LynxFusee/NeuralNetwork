@@ -1,4 +1,4 @@
-use rand::Rng;
+use rand::RngExt;
 
 pub const GAME_W: f32 = 250.0;
 pub const GAME_H: f32 = 450.0;
@@ -82,7 +82,8 @@ impl CarDodgeEnv {
             state[1] = self.obstacle_speed / 20.0;
 
             let mut upcoming = self.obstacles.clone();
-            upcoming.sort_by(|a, b| a.y.partial_cmp(&b.y).unwrap());
+            // LA CORRECTION EST ICI : on trie b par rapport à a
+            upcoming.sort_by(|a, b| b.y.partial_cmp(&a.y).unwrap());
 
             for i in 0..3 {
                 if i < upcoming.len() {
@@ -107,8 +108,8 @@ impl CarDodgeEnv {
         self.spawn_timer += dt_ms;
         if self.spawn_timer >= self.spawn_interval {
             self.spawn_timer = 0.0;
-            let mut rng = rand::thread_rng();
-            let x = rng.gen_range(0.0..(GAME_W - OBSTACLE_W));
+            let mut rng = rand::rng(); 
+            let x = rng.random_range(0.0..(GAME_W - OBSTACLE_W));
             self.obstacles.push(Obstacle { x, y: -OBSTACLE_H, speed: self.obstacle_speed });
         }
 
