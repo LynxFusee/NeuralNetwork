@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+macroquad = "0.4.16"
 rand = "0.10.2"
 rand_distr = "0.6.0"
 rayon = "1.12.0"

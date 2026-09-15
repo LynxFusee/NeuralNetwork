@@ -2,10 +2,9 @@ use rand::RngExt;
 use rand_distr::{Normal, Distribution};
 use serde::{Serialize, Deserialize};
 
-pub const MUT_CHANCE: f32 = 0.50; 
-pub const MUT_FORCE: f32 = 0.30;  
-//pub const TOP_MUT_CHANCE: f32 = 0.03;
-pub const RND_MUT_CHANCE: f32 = 0.85;
+pub const MUT_CHANCE: f32 = 0.02; 
+pub const MUT_FORCE: f32 = 0.05;  
+pub const RND_MUT_CHANCE: f32 = 1.0;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Neuron {
@@ -21,6 +20,13 @@ pub struct Layer {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Network {
     pub layers: Vec<Layer>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ModelSave {
+    pub network: Network,
+    pub average_score: f32,
+    pub max_score: f32,
 }
 
 impl Neuron {
@@ -139,9 +145,18 @@ impl Network {
         entries
     }
 
+    pub fn forward_all(&self, mut entries: Vec<f32>) -> Vec<Vec<f32>> {
+        let mut activations = vec![entries.clone()];
+        for i in 0..self.layers.len() {
+            entries = self.layers[i].logic(entries);
+            activations.push(entries.clone());
+        }
+        activations
+    }
+
     pub fn mutate(&mut self) {
         for layer in self.layers.iter_mut() {
             layer.mutate();
         }
     }
-}
+}//23sCCjNT

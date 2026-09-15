@@ -82,7 +82,6 @@ impl CarDodgeEnv {
             state[1] = self.obstacle_speed / 20.0;
 
             let mut upcoming = self.obstacles.clone();
-            // LA CORRECTION EST ICI : on trie b par rapport à a
             upcoming.sort_by(|a, b| b.y.partial_cmp(&a.y).unwrap());
 
             for i in 0..3 {
@@ -109,7 +108,15 @@ impl CarDodgeEnv {
         if self.spawn_timer >= self.spawn_interval {
             self.spawn_timer = 0.0;
             let mut rng = rand::rng(); 
-            let x = rng.random_range(0.0..(GAME_W - OBSTACLE_W));
+            let mut x = rng.random_range(0.0..(GAME_W - OBSTACLE_W));
+
+            // On s'assure qu'un passage reste toujours ouvert par rapport au dernier obstacle
+            if let Some(last_ob) = self.obstacles.last() {
+                if (x - last_ob.x).abs() < OBSTACLE_W {
+                    x = (x + OBSTACLE_W * 2.0) % (GAME_W - OBSTACLE_W);
+                }
+            }
+
             self.obstacles.push(Obstacle { x, y: -OBSTACLE_H, speed: self.obstacle_speed });
         }
 

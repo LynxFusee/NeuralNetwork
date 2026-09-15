@@ -4,42 +4,64 @@ mod game;
 
 use game::CarDodgeEnv;
 use manager::Population;
-use ia::Network;
+use ia::{Network, ModelSave};
 use std::fs;
 use std::path::Path;
-use rayon::prelude::*; // <-- L'import magique pour le multithreading
+use std::env;
+use rayon::prelude::*; 
 
 fn main() {
-    println!("Démarrage de l'entraînement IA (Mode Multithread activé) !");
+    let args: Vec<String> = env::args().collect();
+    let save_file = if args.len() > 1 {
+        args[1].clone()
+    } else {
+        String::from("best_model.json")
+    };
+
+    println!("Démarrage de l'entraînement continu (Mode Multithread) !");
+    println!("Fichier de sauvegarde cible : {}", save_file);
+    println!("L'IA va s'entraîner à l'infini. Appuie sur Ctrl+C pour arrêter.");
 
     let pop_size = 100;
-    let per_layer = vec![6, 3]; 
+    let per_layer = vec![16, 8, 3]; 
     let num_games = 100;
-    let save_file = "best_model.json";
 
-    // 1. GESTION DE LA SAUVEGARDE (CHARGEMENT)
     let mut initial_agents = None;
-    if Path::new(save_file).exists() {
+    let mut best_all_time_score = 0.0;
+    let mut best_all_time_max = 0.0;
+    let mut best_all_time_network = Network::new(per_layer.clone(), 8, None, None);
+
+    if Path::new(&save_file).exists() {
         println!("Sauvegarde trouvée ! Chargement de {}...", save_file);
-        if let Ok(json_data) = fs::read_to_string(save_file) {
-            if let Ok(champion) = serde_json::from_str::<Network>(&json_data) {
-                initial_agents = Some(vec![champion; pop_size]);
-                println!("Modèle chargé avec succès !");
+        if let Ok(json_data) = fs::read_to_string(&save_file) {
+            if let Ok(save_data) = serde_json::from_str::<ModelSave>(&json_data) {
+                initial_agents = Some(vec![save_data.network.clone(); pop_size]);
+                best_all_time_score = save_data.average_score;
+                best_all_time_max = save_data.max_score;
+                best_all_time_network = save_data.network;
+                println!("Modèle chargé avec succès (Record : {:.2}s / Max : {:.2}s) !", best_all_time_score, best_all_time_max);
+            } else if let Ok(champion) = serde_json::from_str::<Network>(&json_data) {
+                initial_agents = Some(vec![champion.clone(); pop_size]);
+                best_all_time_network = champion;
+                println!("Ancien format de modèle chargé et converti avec succès !");
             }
         }
     } else {
-        println!("Aucune sauvegarde trouvée. Création d'une nouvelle lignée.");
+        println!("Aucune sauvegarde trouvée pour '{}'. Création d'une nouvelle lignée.", save_file);
     }
 
-    let mut population = Population::new(pop_size, per_layer, 8, initial_agents);
-    let mut best_all_time_network = population.agents[0].clone();
-    let mut best_all_time_score = 0.0;
+    let mut population = Population::new(pop_size, per_layer.clone(), 8, initial_agents);
+    if best_all_time_score == 0.0 {
+        best_all_time_network = population.agents[0].clone();
+    }
+    
+    let mut score_at_last_save = best_all_time_score;
 
-    for _ in 0..1000 {
-        // 2. LA BOUCLE PARALLÈLE
-        // Au lieu d'une boucle "for", on demande à Rayon de lancer les parties en même temps
-        let total_scores = (0..num_games)
-            .into_par_iter() // <-- C'est ici que ton PC passe à 100% d'utilisation
+    loop {
+        let current_gen = population.generation;
+
+        let (total_scores, max_scores) = (0..num_games)
+            .into_par_iter() 
             .map(|_| {
                 let mut env = CarDodgeEnv::new(pop_size);
 
@@ -50,7 +72,6 @@ fn main() {
                     for i in 0..pop_size {
                         if let Some(state_array) = states[i] {
                             let entries = state_array.to_vec();
-                            // Les cerveaux sont lus simultanément par tous les cœurs
                             let outputs = population.agents[i].logic(entries);
 
                             let mut best_action = 0; 
@@ -65,51 +86,78 @@ fn main() {
                     env.step(&actions, 16.0);
                 }
 
-                // À la fin d'UNE partie, ce cœur renvoie les scores des 100 voitures
-                env.cars.iter().map(|car| car.time_alive).collect::<Vec<f32>>()
+                let scores: Vec<f32> = env.cars.iter().map(|car| car.time_alive).collect();
+                (scores.clone(), scores)
             })
-            // Récupère les tableaux de scores de toutes les parties et les additionne
             .reduce(
-                || vec![0.0; pop_size],
-                |mut acc, scores| {
+                || (vec![0.0; pop_size], vec![0.0; pop_size]),
+                |mut acc, curr| {
                     for i in 0..pop_size {
-                        acc[i] += scores[i];
+                        acc.0[i] += curr.0[i];
+                        if curr.1[i] > acc.1[i] {
+                            acc.1[i] = curr.1[i];
+                        }
                     }
                     acc
                 },
             );
 
-        // 3. MOYENNE ET ÉVOLUTION
-        let mut scored_agents: Vec<(f32, Network)> = vec![];
+        let mut scored_agents: Vec<(f32, f32, Network)> = vec![];
         for i in 0..pop_size {
             let average_score = total_scores[i] / (num_games as f32);
-            scored_agents.push((average_score, population.agents[i].clone()));
+            let max_score = max_scores[i];
+            scored_agents.push((average_score, max_score, population.agents[i].clone()));
         }
 
         scored_agents.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
 
         println!(
-            "Génération {} - Meilleur temps MOYEN : {:.2}s", 
-            population.generation, 
-            scored_agents[0].0
+            "Génération {} - Meilleur temps MOYEN : {:.2}s | Meilleur essai unique : {:.2}s", 
+            current_gen, 
+            scored_agents[0].0,
+            scored_agents[0].1
         );
 
         if scored_agents[0].0 > best_all_time_score {
             best_all_time_score = scored_agents[0].0;
-            best_all_time_network = scored_agents[0].1.clone();
+            best_all_time_max = scored_agents[0].1;
+            best_all_time_network = scored_agents[0].2.clone();
         }
 
-        let sorted_networks: Vec<Network> = scored_agents.into_iter().map(|(_, net)| net).collect();
-        population.next_generation(sorted_networks);
-    }
-    
-    // 4. GESTION DE LA SAUVEGARDE (ÉCRITURE)
-    println!("Entraînement terminé ! Sauvegarde du meilleur modèle...");
-    if let Ok(json_data) = serde_json::to_string_pretty(&best_all_time_network) {
-        if fs::write(save_file, json_data).is_ok() {
-            println!("Modèle sauvegardé avec succès dans '{}' (Record : {:.2}s) !", save_file, best_all_time_score);
-        } else {
-            println!("Erreur : Impossible d'écrire sur le disque.");
+        if current_gen > 0 && current_gen % 100 == 0 {
+            if best_all_time_score > score_at_last_save {
+                println!("--> 💾 Nouveau record absolu ! Sauvegarde automatique (Génération {})...", current_gen);
+                let save_data = ModelSave {
+                    network: best_all_time_network.clone(),
+                    average_score: best_all_time_score,
+                    max_score: best_all_time_max,
+                };
+                if let Ok(json_data) = serde_json::to_string_pretty(&save_data) {
+                    if fs::write(&save_file, json_data).is_ok() {
+                        println!("--> ✅ Modèle sauvegardé dans '{}' (Record moyen : {:.2}s) !", save_file, best_all_time_score);
+                    } else {
+                        println!("--> ❌ Erreur : Impossible d'écrire sur le disque.");
+                    }
+                }
+                score_at_last_save = best_all_time_score;
+            } else {
+                println!("--> 🔄 Aucun progrès sur 100 générations. Restauration de la dernière sauvegarde...");
+                if let Ok(json_data) = fs::read_to_string(&save_file) {
+                    if let Ok(save_data) = serde_json::from_str::<ModelSave>(&json_data) {
+                        best_all_time_network = save_data.network;
+                        best_all_time_score = save_data.average_score;
+                        best_all_time_max = save_data.max_score;
+                    } else if let Ok(champion) = serde_json::from_str::<Network>(&json_data) {
+                        best_all_time_network = champion;
+                    }
+                }
+                let fallback_networks = vec![best_all_time_network.clone(); pop_size];
+                population.next_generation(fallback_networks);
+                continue;
+            }
         }
+
+        let sorted_networks: Vec<Network> = scored_agents.into_iter().map(|(_, _, net)| net).collect();
+        population.next_generation(sorted_networks);
     }
 }
